@@ -1,0 +1,1542 @@
+
+
+#include <stdint.h>
+#include <math.h>
+#include <Wire.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <Arduino_JSON.h>
+#include <WiFiManager.h>
+#include <Preferences.h>
+#include "time.h"
+
+#include <Adafruit_GFX.h>
+#include <Adafruit_SH110X.h>
+
+#include <Fonts/FreeSansBold18pt7b.h>
+#include <Fonts/FreeSansBold9pt7b.h>
+#include <Fonts/FreeSans9pt7b.h>
+
+// ==================================================
+// 1. CONFIG (ESP32-C3 + SH1106 + VIEWERS WIRING)
+// ==================================================
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+// Viewers' default wiring (ESP32-C3)
+#define SDA_PIN 8
+#define SCL_PIN 9
+#define TOUCH_PIN 3
+
+// OLED I2C address
+#define OLED_ADDR 0x3C
+
+// Touch stability config:
+// - Set to 1 if touch sensor outputs HIGH when touched
+// - Set to 0 if touch sensor outputs LOW when touched
+#define TOUCH_ACTIVE_HIGH 1
+
+// Debounce / stability (ms)
+static const uint16_t TOUCH_DEBOUNCE_MS = 18;
+
+// SH1106 display object
+Adafruit_SH1106G display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// SH110X color constants mapping (keep code clean)
+#ifndef SH110X_WHITE
+#define SH110X_WHITE 1
+#endif
+#ifndef SH110X_BLACK
+#define SH110X_BLACK 0
+#endif
+
+// ==================================================
+// 2. ASSETS (UNCHANGED)
+// ==================================================
+// --- WEATHER ICONS ---
+const unsigned char bmp_clear[] PROGMEM = {
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00, 0x01, 0x80, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x01, 0x03, 0xc0, 0x80, 0x00, 0x0f, 0xf0, 0x00, 0x00, 0x3f, 0xfc, 0x00,
+  0x00, 0x7f, 0xfe, 0x00, 0x00, 0xff, 0xff, 0x00, 0x06, 0xff, 0xff, 0x60, 0x06, 0xff, 0xff, 0x60,
+  0x06, 0xff, 0xff, 0x60, 0x00, 0xff, 0xff, 0x00, 0x3e, 0xff, 0xff, 0x7c, 0x3e, 0xff, 0xff, 0x7c,
+  0x3e, 0xff, 0xff, 0x7c, 0x00, 0xff, 0xff, 0x00, 0x06, 0xff, 0xff, 0x60, 0x06, 0xff, 0xff, 0x60,
+  0x06, 0xff, 0xff, 0x60, 0x00, 0xff, 0xff, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x3f, 0xfc, 0x00,
+  0x01, 0x0f, 0xf0, 0x80, 0x00, 0x03, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x80, 0x00,
+  0x00, 0x01, 0x80, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+const unsigned char bmp_clouds[] PROGMEM = {
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe0, 0x00,
+  0x00, 0x0f, 0xf8, 0x00, 0x00, 0x1f, 0xfc, 0x00, 0x00, 0x3f, 0xfe, 0x00, 0x00, 0x3f, 0xff, 0x00,
+  0x00, 0x7f, 0xff, 0x80, 0x00, 0xff, 0xff, 0xc0, 0x00, 0xff, 0xff, 0xe0, 0x01, 0xff, 0xff, 0xf0,
+  0x03, 0xff, 0xff, 0xf8, 0x07, 0xff, 0xff, 0xfc, 0x07, 0xff, 0xff, 0xfc, 0x0f, 0xff, 0xff, 0xfe,
+  0x0f, 0xff, 0xff, 0xfe, 0x1f, 0xff, 0xff, 0xff, 0x1f, 0xff, 0xff, 0xff, 0x1f, 0xff, 0xff, 0xff,
+  0x1f, 0xff, 0xff, 0xff, 0x1f, 0xff, 0xff, 0xff, 0x1f, 0xff, 0xff, 0xff, 0x0f, 0xff, 0xff, 0xfe,
+  0x07, 0xff, 0xff, 0xfc, 0x03, 0xff, 0xff, 0xf8, 0x00, 0xff, 0xff, 0xe0, 0x00, 0x3f, 0xff, 0x80,
+  0x00, 0x0f, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+const unsigned char bmp_rain[] PROGMEM = {
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe0, 0x00, 0x00, 0x0f, 0xf8, 0x00, 0x00, 0x1f, 0xfc, 0x00,
+  0x00, 0x3f, 0xfe, 0x00, 0x00, 0x7f, 0xff, 0x80, 0x00, 0xff, 0xff, 0xc0, 0x01, 0xff, 0xff, 0xf0,
+  0x03, 0xff, 0xff, 0xf8, 0x07, 0xff, 0xff, 0xfc, 0x0f, 0xff, 0xff, 0xfe, 0x1f, 0xff, 0xff, 0xff,
+  0x1f, 0xff, 0xff, 0xff, 0x1f, 0xff, 0xff, 0xff, 0x1f, 0xff, 0xff, 0xff, 0x0f, 0xff, 0xff, 0xfe,
+  0x07, 0xff, 0xff, 0xfc, 0x03, 0xff, 0xff, 0xf8, 0x00, 0xff, 0xff, 0xe0, 0x00, 0x3f, 0xff, 0x80,
+  0x00, 0x0f, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x0c, 0x00, 0x00, 0x60, 0x0c, 0x00,
+  0x00, 0xe0, 0x1c, 0x00, 0x00, 0xc0, 0x18, 0x00, 0x03, 0x80, 0x70, 0x00, 0x03, 0x80, 0x70, 0x00,
+  0x03, 0x00, 0x60, 0x00, 0x02, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+const unsigned char mini_sun[]   PROGMEM = { 0x00, 0x00, 0x01, 0x80, 0x00, 0x00, 0x10, 0x08, 0x04, 0x20, 0x03, 0xc0, 0x27, 0xe4, 0x07, 0xe0, 0x07, 0xe0, 0x27, 0xe4, 0x03, 0xc0, 0x04, 0x20, 0x10, 0x08, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00 };
+const unsigned char mini_cloud[] PROGMEM = { 0x00, 0x00, 0x00, 0x00, 0x01, 0xc0, 0x07, 0xe0, 0x0f, 0xf0, 0x1f, 0xf8, 0x1f, 0xf8, 0x3f, 0xfc, 0x3f, 0xfc, 0x7f, 0xfe, 0x3f, 0xfe, 0x1f, 0xfc, 0x0f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+const unsigned char mini_rain[]  PROGMEM = { 0x00, 0x00, 0x00, 0x00, 0x01, 0xc0, 0x07, 0xe0, 0x0f, 0xf0, 0x1f, 0xf8, 0x1f, 0xf8, 0x3f, 0xfc, 0x3f, 0xfc, 0x7f, 0xfe, 0x3f, 0xfe, 0x1f, 0xfc, 0x00, 0x00, 0x44, 0x44, 0x22, 0x22, 0x11, 0x11 };
+const unsigned char bmp_tiny_drop[] PROGMEM = { 0x10, 0x38, 0x7c, 0xfe, 0xfe, 0x7c, 0x38, 0x00 };
+
+// --- EMOTION PARTICLES (16x16) ---
+const unsigned char bmp_heart[] PROGMEM = { 0x00, 0x00, 0x0c, 0x60, 0x1e, 0xf0, 0x3f, 0xf8, 0x7f, 0xfc, 0x7f, 0xfc, 0x7f, 0xfc, 0x3f, 0xf8, 0x1f, 0xf0, 0x0f, 0xe0, 0x07, 0xc0, 0x03, 0x80, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+const unsigned char bmp_zzz[]   PROGMEM = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x0c, 0x00, 0x18, 0x00, 0x30, 0x00, 0x7e, 0x00, 0x00, 0x3c, 0x00, 0x0c, 0x00, 0x18, 0x00, 0x30, 0x00, 0x7c, 0x00, 0x00, 0x00, 0x00, 0x00 };
+const unsigned char bmp_anger[] PROGMEM = { 0x00, 0x00, 0x11, 0x10, 0x2a, 0x90, 0x44, 0x40, 0x80, 0x20, 0x80, 0x20, 0x44, 0x40, 0x2a, 0x90, 0x11, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+// ==================================================
+// 3. GLOBALS (MOSTLY UNCHANGED)
+// ==================================================
+int currentPage = 0;
+bool highBrightness = true;
+
+// Tap logic
+int tapCounter = 0;
+unsigned long lastTapTime = 0;
+unsigned long pressStartTime = 0;
+bool isLongPressHandled = false;
+
+// Touch state (debounced)
+bool lastTouchActive = false;
+bool stableRaw = false;
+bool lastRaw = false;
+unsigned long rawChangedAt = 0;
+
+const unsigned long LONG_PRESS_TIME = 800;
+const unsigned long EXTRA_LONG_PRESS_TIME = 1800;
+
+// Tap finalize window (slightly longer to make TRIPLE TAP reliable)
+const unsigned long MULTI_TAP_DELAY = 420;
+
+unsigned long lastPageSwitch = 0;
+const unsigned long PAGE_INTERVAL = 8000;
+
+// AI popup state
+bool aiPopupActive = false;
+unsigned long aiPopupStart = 0;
+const unsigned long AI_POPUP_SHOW_MS = 30000;
+unsigned long lastAiCall = 0;
+const unsigned long AI_COOLDOWN_MS = 15000;
+String aiLastText = "";
+
+// AI scroll
+String aiLines[20];
+int aiLineCount = 0;
+int aiScrollOffset = 0;
+int maxScrollOffset = 0;
+
+// MOODS
+#define MOOD_NORMAL 0
+#define MOOD_HAPPY 1
+#define MOOD_SURPRISED 2
+#define MOOD_SLEEPY 3
+#define MOOD_ANGRY 4
+#define MOOD_SAD 5
+#define MOOD_EXCITED 6
+#define MOOD_LOVE 7
+#define MOOD_SUSPICIOUS 8
+int currentMood = MOOD_NORMAL;
+
+// Weather config
+String city = "Dhaka";
+String countryCode = "BD";
+String apiKey = "Enter you weather key here";  // OpenWeatherMap API key
+unsigned long lastWeatherUpdate = 0;
+float temperature = 0.0;
+float feelsLike = 0.0;
+int humidity = 0;
+String weatherMain = "Loading";
+String weatherDesc = "Wait...";
+
+struct ForecastDay {
+  String dayName;
+  int temp;
+  String iconType;
+};
+ForecastDay fcast[3];
+
+// Time / timezone (UNIVERSAL)
+const char* ntpServer = "pool.ntp.org";
+int tzOffsetMinutes = 360;    // Dhaka default (UTC+6)
+int weatherTzOffsetSec = 0;   // OpenWeather city timezone (seconds)
+
+// World clock config
+String worldCity1 = "New York";
+String worldCity2 = "London";
+int worldOffset1 = -5 * 60;   // minutes
+int worldOffset2 = 0;         // minutes
+
+// ==================================================
+// 4. POMODORO
+// ==================================================
+struct PomoMode {
+  const char* name;
+  uint32_t workSec;
+  uint32_t breakSec;
+};
+PomoMode modes[] = {
+  {"25/5",  25 * 60UL,  5 * 60UL},
+  {"50/10", 50 * 60UL, 10 * 60UL},
+  {"90/15", 90 * 60UL, 15 * 60UL},
+};
+int pomoModeIndex = 0;
+
+bool pomoRunning = false;
+bool pomoOnBreak = false;
+uint32_t pomoRemainSec = modes[0].workSec;
+unsigned long pomoLastTickMs = 0;
+
+// ==================================================
+// 5. OPENROUTER CONFIG
+// ==================================================
+String openrouterApiKey = "";
+static const char* OR_URL = "https://openrouter.ai/api/v1/chat/completions";
+static const char* OR_MODEL = "deepseek/deepseek-chat";
+
+// ==================================================
+// 6. EYE PHYSICS
+// ==================================================
+struct Eye {
+  float x, y;
+  float w, h;
+  float targetX, targetY, targetW, targetH;
+
+  float pupilX, pupilY;
+  float targetPupilX, targetPupilY;
+
+  float velX, velY, velW, velH;
+  float pVelX, pVelY;
+  float k = 0.12f;
+  float d = 0.60f;
+  float pk = 0.08f;
+  float pd = 0.50f;
+
+  bool blinking = false;
+  unsigned long lastBlink = 0;
+  unsigned long nextBlinkTime = 0;
+
+  void init(float _x, float _y, float _w, float _h) {
+    x = targetX = _x;
+    y = targetY = _y;
+    w = targetW = _w;
+    h = targetH = _h;
+    pupilX = targetPupilX = 0;
+    pupilY = targetPupilY = 0;
+    velX = velY = velW = velH = 0;
+    pVelX = pVelY = 0;
+    nextBlinkTime = millis() + (unsigned long)random(1000, 4000);
+  }
+
+  void update() {
+    float ax = (targetX - x) * k;
+    float ay = (targetY - y) * k;
+    float aw = (targetW - w) * k;
+    float ah = (targetH - h) * k;
+
+    velX = (velX + ax) * d;
+    velY = (velY + ay) * d;
+    velW = (velW + aw) * d;
+    velH = (velH + ah) * d;
+
+    x += velX;
+    y += velY;
+    w += velW;
+    h += velH;
+
+    float pax = (targetPupilX - pupilX) * pk;
+    float pay = (targetPupilY - pupilY) * pk;
+    pVelX = (pVelX + pax) * pd;
+    pVelY = (pVelY + pay) * pd;
+    pupilX += pVelX;
+    pupilY += pVelY;
+  }
+};
+
+Eye leftEye, rightEye;
+unsigned long lastSaccade = 0;
+unsigned long saccadeInterval = 3000;
+float breathVal = 0;
+
+// ==================================================
+// 7. HELPERS
+// ==================================================
+const unsigned char* getBigIcon(String w) {
+  if (w == "Clear") return bmp_clear;
+  if (w == "Clouds") return bmp_clouds;
+  if (w == "Rain" || w == "Drizzle") return bmp_rain;
+  return bmp_clouds;
+}
+const unsigned char* getMiniIcon(String w) {
+  if (w == "Clear") return mini_sun;
+  if (w == "Rain" || w == "Drizzle" || w == "Thunderstorm") return mini_rain;
+  return mini_cloud;
+}
+
+void updateMoodBasedOnWeather() {
+  int m = MOOD_NORMAL;
+  if (weatherMain == "Clear") m = MOOD_HAPPY;
+  else if (weatherMain == "Rain" || weatherMain == "Drizzle") m = MOOD_SAD;
+  else if (weatherMain == "Thunderstorm") m = MOOD_SURPRISED;
+  else if (weatherMain == "Clouds") m = MOOD_NORMAL;
+  else if (temperature > 32) m = MOOD_EXCITED;
+  else if (temperature < 10) m = MOOD_SLEEPY;
+  currentMood = m;
+}
+
+void drawCenteredText(const String& s, int y) {
+  display.setFont(NULL);
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(s.c_str(), 0, y, &x1, &y1, &w, &h);
+  int x = (SCREEN_WIDTH - (int)w) / 2;
+  display.setCursor(x, y);
+  display.print(s);
+}
+
+// ==================================================
+// 8. WEATHER (FIXED FORECAST TIMEZONE ALIGNMENT)
+// ==================================================
+void getWeatherAndForecast() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (apiKey.length() < 10) return;
+
+  // --- Current weather ---
+  HTTPClient http;
+  String url = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "," + countryCode + "&appid=" + apiKey + "&units=metric";
+  http.begin(url);
+  if (http.GET() == 200) {
+    String payload = http.getString();
+    JSONVar myObject = JSON.parse(payload);
+    if (JSON.typeof(myObject) != "undefined") {
+      temperature = double(myObject["main"]["temp"]);
+      feelsLike = double(myObject["main"]["feels_like"]);
+      humidity = int(myObject["main"]["humidity"]);
+      weatherMain = (const char*)myObject["weather"][0]["main"];
+      weatherDesc = (const char*)myObject["weather"][0]["description"];
+      if (weatherDesc.length() > 0) weatherDesc[0] = toupper(weatherDesc[0]);
+      if (myObject.hasOwnProperty("timezone")) {
+        weatherTzOffsetSec = int(myObject["timezone"]); // seconds from UTC
+      }
+      updateMoodBasedOnWeather();
+    }
+  }
+  http.end();
+
+  // --- Forecast ---
+  url = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "," + countryCode + "&appid=" + apiKey + "&units=metric";
+  http.begin(url);
+  if (http.GET() == 200) {
+    String payload = http.getString();
+    JSONVar fo = JSON.parse(payload);
+    if (JSON.typeof(fo) != "undefined" && fo.hasOwnProperty("list")) {
+      if (fo.hasOwnProperty("city") && fo["city"].hasOwnProperty("timezone")) {
+        weatherTzOffsetSec = int(fo["city"]["timezone"]);
+      }
+
+      auto pickIndexForDay = [&](int targetWday, int targetYday) -> int {
+        int bestIdx = -1;
+        long bestScore = 2147483647L;
+
+        int n = (int)fo["list"].length();
+        for (int i = 0; i < n; i++) {
+          long dt = (long)fo["list"][i]["dt"];   // UTC epoch
+          long local = dt + weatherTzOffsetSec;  // city local epoch
+          struct tm tmL;
+          time_t tt = (time_t)local;
+          gmtime_r(&tt, &tmL);
+
+          if (tmL.tm_yday != targetYday) continue;
+          if (tmL.tm_wday != targetWday) continue;
+
+          long mins = tmL.tm_hour * 60 + tmL.tm_min;
+          long score = labs(mins - (12 * 60)); // closest to 12:00 local
+          if (score < bestScore) { bestScore = score; bestIdx = i; }
+        }
+        return bestIdx;
+      };
+
+      time_t nowUtc;
+      time(&nowUtc);
+      time_t nowLocal = nowUtc + weatherTzOffsetSec;
+      struct tm nowL;
+      gmtime_r(&nowLocal, &nowL);
+
+      const char* days[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+
+      for (int d = 1; d <= 3; d++) {
+        int targetWday = (nowL.tm_wday + d) % 7;
+
+        // safer yday wrap (handles year edges)
+        int targetYday = nowL.tm_yday + d;
+        if (targetYday > 365) targetYday -= 366;
+
+        int idx = pickIndexForDay(targetWday, targetYday);
+        if (idx < 0) {
+          idx = min((int)fo["list"].length() - 1, d * 8);
+        }
+
+        fcast[d - 1].temp = (int)double(fo["list"][idx]["main"]["temp"]);
+        fcast[d - 1].iconType = (const char*)fo["list"][idx]["weather"][0]["main"];
+        fcast[d - 1].dayName = days[targetWday];
+      }
+    }
+  }
+  http.end();
+}
+
+// ==================================================
+// 9. AI (OPENROUTER) - WORKING WITH QUOTES AND MANUAL SCROLL
+// ==================================================
+String makeAiPrompt() {
+  String p = "";
+  p += "You are DeskBuddy2.0, a tiny OLED desk companion by XNova. ";
+  p += "Give a short, inspiring quote from a famous person (e.g., Einstein, Confucius, etc.). ";
+  p += "The quote must be 1-2 lines max. Include the author. No commentary. ";
+  p += "Make it fresh each time. Return only the quote and author.";
+  return p;
+}
+
+String extractAndCleanResponse(String payload) {
+  JSONVar doc = JSON.parse(payload);
+  if (JSON.typeof(doc) == "undefined") {
+    int contentStart = payload.indexOf("\"content\":\"");
+    if (contentStart == -1) contentStart = payload.indexOf("\"content\": \"");
+    if (contentStart != -1) {
+      contentStart += 11;
+      int contentEnd = payload.indexOf("\"", contentStart);
+      while (contentEnd != -1 && contentEnd > 0 && payload.charAt(contentEnd - 1) == '\\') {
+        contentEnd = payload.indexOf("\"", contentEnd + 1);
+      }
+      if (contentEnd != -1) {
+        String content = payload.substring(contentStart, contentEnd);
+        content.replace("\\n", "\n");
+        content.replace("\\\"", "\"");
+        content.replace("\\\\", "\\");
+        content.replace("\\t", "\t");
+        content.replace("\\r", "\r");
+        return content;
+      }
+    }
+    return "Error: No quote.";
+  }
+
+  if (!doc.hasOwnProperty("choices") || doc["choices"].length() == 0) return "No choices.";
+  JSONVar choice = doc["choices"][0];
+  if (!choice.hasOwnProperty("message")) return "No message.";
+  JSONVar msg = choice["message"];
+  if (!msg.hasOwnProperty("content")) return "No content.";
+
+  String content = (const char*)msg["content"];
+
+  content.replace("```", "");
+  content.replace("**", "");
+  content.replace("*", "");
+  content.replace("#", "");
+  content.replace("`", "");
+  content.replace("\\n", "\n");
+  content.replace("\\\"", "\"");
+  content.replace("\\\\", "\\");
+  content.replace("\\t", "\t");
+  content.replace("\\r", "\r");
+
+  content.trim();
+  if (content.length() == 0) return "...";
+  return content;
+}
+
+String fetchAiLineOpenRouter() {
+  if (WiFi.status() != WL_CONNECTED) return "No WiFi — I’m still cheering for you!";
+  if (openrouterApiKey.length() < 20) return "Set OpenRouter key in portal to unlock AI";
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient https;
+
+  if (!https.begin(client, OR_URL)) {
+    return "Connection failed.";
+  }
+
+  https.addHeader("Content-Type", "application/json");
+  https.addHeader("Authorization", "Bearer " + openrouterApiKey);
+  https.addHeader("X-Title", "DeskBuddy2.0");
+
+  String userPrompt = makeAiPrompt();
+
+  String body = "{";
+  body += "\"model\":\"" + String(OR_MODEL) + "\",";
+  body += "\"max_tokens\":150,";
+  body += "\"temperature\":0.8,";
+  body += "\"messages\":[";
+  body += "{\"role\":\"system\",\"content\":\"You are DeskBuddy2.0, a tiny OLED desk companion by XNova. Give a short, inspiring quote from a famous person. The quote must be 1-2 lines max. Include the author. No commentary. Return only the quote and author.\"},";
+  body += "{\"role\":\"user\",\"content\":\"" + userPrompt + "\"}";
+  body += "]}";
+
+  int httpCode = https.POST(body);
+  if (httpCode <= 0) {
+    https.end();
+    return "AI request failed.";
+  }
+
+  String resp = https.getString();
+  https.end();
+
+  return extractAndCleanResponse(resp);
+}
+
+void startAiPopupIfAllowed() {
+  unsigned long now = millis();
+  if (aiPopupActive) return;
+  if (now - lastAiCall < AI_COOLDOWN_MS) {
+    aiLastText = "Cooldown… try again in a moment";
+    aiPopupActive = true;
+    aiPopupStart = now;
+    return;
+  }
+  lastAiCall = now;
+
+  display.clearDisplay();
+  display.setTextColor(SH110X_WHITE);
+  drawCenteredText("Thinking...", 28);
+  display.display();
+
+  aiLastText = fetchAiLineOpenRouter();
+
+  aiLineCount = 0;
+  String remaining = aiLastText;
+  while (remaining.length() > 0 && aiLineCount < 20) {
+    if (remaining.length() <= 20) {
+      aiLines[aiLineCount++] = remaining;
+      break;
+    }
+    int cut = 20;
+    for (int i = 20; i > 10; i--) {
+      if (remaining[i] == ' ') { cut = i; break; }
+    }
+    aiLines[aiLineCount++] = remaining.substring(0, cut);
+    remaining = remaining.substring(cut);
+    remaining.trim();
+  }
+  aiScrollOffset = 0;
+  maxScrollOffset = (aiLineCount > 4) ? aiLineCount - 4 : 0;
+
+  aiPopupActive = true;
+  aiPopupStart = now;
+}
+
+void closeAiPopup() {
+  aiPopupActive = false;
+}
+
+void drawAiPopup() {
+  display.fillRect(0, 0, 128, 64, SH110X_BLACK);
+  display.drawRect(0, 0, 128, 64, SH110X_WHITE);
+  display.setTextColor(SH110X_WHITE);
+  display.setFont(NULL);
+
+  display.setCursor(6, 6);
+  display.print("Wisdom says:");
+
+  int startLine = aiScrollOffset;
+  int y = 16;
+  for (int i = 0; i < 4 && startLine + i < aiLineCount; i++) {
+    display.setCursor(6, y + i * 12);
+    display.print(aiLines[startLine + i]);
+  }
+}
+
+// ==================================================
+// 10. TOUCH HANDLING (ROBUST / ESP32-C3)
+// ==================================================
+void pomoResetToMode();
+void enterConfigModeFromPage0(); // forward
+
+bool readTouchActiveDebounced() {
+  unsigned long now = millis();
+  bool raw = (digitalRead(TOUCH_PIN) != 0);
+
+  if (raw != lastRaw) {
+    lastRaw = raw;
+    rawChangedAt = now;
+  }
+
+  if (now - rawChangedAt >= TOUCH_DEBOUNCE_MS) {
+    stableRaw = raw;
+  }
+
+#if TOUCH_ACTIVE_HIGH
+  return stableRaw;
+#else
+  return !stableRaw;
+#endif
+}
+
+void handlePomodoroTapActions(int taps) {
+  if (currentPage != 5) return;
+  if (taps == 2) {
+    pomoResetToMode();
+  } else if (taps == 1) {
+    pomoRunning = !pomoRunning;
+    if (pomoRunning) pomoLastTickMs = millis();
+  }
+}
+
+void handleTouch() {
+  bool touchActive = readTouchActiveDebounced();
+  unsigned long now = millis();
+
+  // Press edge
+  if (touchActive && !lastTouchActive) {
+    pressStartTime = now;
+    isLongPressHandled = false;
+  }
+  // Held
+  else if (touchActive && lastTouchActive) {
+    // If AI popup is active, long press scrolls down
+    if (aiPopupActive && !isLongPressHandled) {
+      if (now - pressStartTime > LONG_PRESS_TIME) {
+        if (aiScrollOffset < maxScrollOffset) aiScrollOffset++;
+        isLongPressHandled = true;
+        lastPageSwitch = now;
+        lastTouchActive = touchActive;
+        return;
+      }
+    }
+    // Extra-long press for AI (only on pages other than 0 and 5) when popup not active
+    else if (!isLongPressHandled && !aiPopupActive && currentPage != 0 && currentPage != 5) {
+      if (now - pressStartTime > EXTRA_LONG_PRESS_TIME) {
+        startAiPopupIfAllowed();
+        isLongPressHandled = true;
+        lastPageSwitch = now;
+      }
+    }
+    // Long press (800ms) for other actions (only if popup not active)
+    else if (!isLongPressHandled && !aiPopupActive && (now - pressStartTime > LONG_PRESS_TIME)) {
+      if (currentPage == 5) {
+        currentPage = 0;
+        isLongPressHandled = true;
+        lastPageSwitch = now;
+      } else if (currentPage == 0) {
+        // page0 mood cycle
+        currentMood++;
+        if (currentMood > MOOD_SUSPICIOUS) currentMood = 0;
+        lastSaccade = 0;
+        isLongPressHandled = true;
+        lastPageSwitch = now;
+      } else if (currentPage == 1) {
+        currentPage = 3;
+        isLongPressHandled = true;
+        lastPageSwitch = now;
+      } else if (currentPage == 2) {
+        currentPage = 4;
+        isLongPressHandled = true;
+        lastPageSwitch = now;
+      }
+    }
+  }
+  // Release edge
+  else if (!touchActive && lastTouchActive) {
+    if ((now - pressStartTime < LONG_PRESS_TIME) && !isLongPressHandled) {
+      tapCounter++;
+      lastTapTime = now;
+    }
+  }
+
+  lastTouchActive = touchActive;
+
+  if (tapCounter > 0) {
+    if (now - lastTapTime > MULTI_TAP_DELAY) {
+      lastPageSwitch = now;
+
+      if (aiPopupActive) {
+        closeAiPopup();
+        tapCounter = 0;
+        return;
+      }
+
+      //  TRIPLE TAP only on Page-0 => Config Mode
+      if (tapCounter >= 3) {
+        if (currentPage == 0) {
+          tapCounter = 0;
+          enterConfigModeFromPage0();
+          return;
+        }
+        tapCounter = 0;
+        return;
+      }
+
+      if (tapCounter == 2) {
+        if (currentPage == 5) {
+          handlePomodoroTapActions(2);
+        } else {
+          highBrightness = !highBrightness;
+          display.setContrast(highBrightness ? 255 : 32);
+        }
+      } else if (tapCounter == 1) {
+        if (currentPage == 5) {
+          handlePomodoroTapActions(1);
+        } else {
+          currentPage = (currentPage + 1) % 6;
+        }
+      }
+      tapCounter = 0;
+    }
+  }
+}
+
+// ==================================================
+// 11. DRAWING: EYES
+// ==================================================
+void drawEyelidMask(float x, float y, float w, float h, int mood, bool isLeft) {
+  int ix = (int)x;
+  int iy = (int)y;
+  int iw = (int)w;
+  int ih = (int)h;
+  display.setTextColor(SH110X_BLACK);
+
+  if (mood == MOOD_ANGRY) {
+    if (isLeft)
+      for (int i = 0; i < 16; i++) display.drawLine(ix, iy + i, ix + iw, iy - 6 + i, SH110X_BLACK);
+    else
+      for (int i = 0; i < 16; i++) display.drawLine(ix, iy - 6 + i, ix + iw, iy + i, SH110X_BLACK);
+  } else if (mood == MOOD_SAD) {
+    if (isLeft)
+      for (int i = 0; i < 16; i++) display.drawLine(ix, iy - 6 + i, ix + iw, iy + i, SH110X_BLACK);
+    else
+      for (int i = 0; i < 16; i++) display.drawLine(ix, iy + i, ix + iw, iy - 6 + i, SH110X_BLACK);
+  } else if (mood == MOOD_HAPPY || mood == MOOD_LOVE || mood == MOOD_EXCITED) {
+    display.fillRect(ix, iy + ih - 12, iw, 14, SH110X_BLACK);
+    display.fillCircle(ix + iw / 2, iy + ih + 6, (int)(iw / 1.3f), SH110X_BLACK);
+  } else if (mood == MOOD_SLEEPY) {
+    display.fillRect(ix, iy, iw, ih / 2 + 2, SH110X_BLACK);
+  } else if (mood == MOOD_SUSPICIOUS) {
+    if (isLeft) display.fillRect(ix, iy, iw, ih / 2 - 2, SH110X_BLACK);
+    else display.fillRect(ix, iy + ih - 8, iw, 8, SH110X_BLACK);
+  }
+}
+
+void drawUltraProEye(Eye& e, bool isLeft) {
+  int ix = (int)e.x;
+  int iy = (int)e.y;
+  int iw = (int)e.w;
+  int ih = (int)e.h;
+
+  int r = 8;
+  if (iw < 20) r = 3;
+  display.fillRoundRect(ix, iy, iw, ih, r, SH110X_WHITE);
+
+  int cx = ix + iw / 2;
+  int cy = iy + ih / 2;
+
+  int pw = (int)(iw / 2.2f);
+  int ph = (int)(ih / 2.2f);
+
+  int px = cx + (int)e.pupilX - (pw / 2);
+  int py = cy + (int)e.pupilY - (ph / 2);
+
+  if (px < ix) px = ix;
+  if (px + pw > ix + iw) px = ix + iw - pw;
+  if (py < iy) py = iy;
+  if (py + ph > iy + ih) py = iy + ih - ph;
+
+  display.fillRoundRect(px, py, pw, ph, r / 2, SH110X_BLACK);
+
+  if (iw > 15 && ih > 15) {
+    display.fillCircle(px + pw - 4, py + 4, 2, SH110X_WHITE);
+  }
+
+  drawEyelidMask(e.x, e.y, e.w, e.h, currentMood, isLeft);
+}
+
+void updatePhysicsAndMood() {
+  unsigned long now = millis();
+  breathVal = sinf((float)now / 800.0f) * 1.5f;
+
+  if (now > leftEye.nextBlinkTime) {
+    leftEye.blinking = true;
+    leftEye.lastBlink = now;
+    rightEye.blinking = true;
+    rightEye.lastBlink = now;
+    leftEye.nextBlinkTime = now + (unsigned long)random(2000, 6000);
+    rightEye.nextBlinkTime = leftEye.nextBlinkTime;
+  }
+  if (leftEye.blinking) {
+    leftEye.targetH = 2;
+    rightEye.targetH = 2;
+    if (now - leftEye.lastBlink > 120) {
+      leftEye.blinking = false;
+      rightEye.blinking = false;
+    }
+  }
+
+  if (!leftEye.blinking && now - lastSaccade > saccadeInterval) {
+    lastSaccade = now;
+    saccadeInterval = (unsigned long)random(500, 3000);
+
+    int dir = random(0, 10);
+    float lx = 0, ly = 0;
+
+    if (dir < 4) { lx = 0; ly = 0; }
+    else if (dir == 4) { lx = -6; ly = -4; }
+    else if (dir == 5) { lx = 6; ly = -4; }
+    else if (dir == 6) { lx = -6; ly = 4; }
+    else if (dir == 7) { lx = 6; ly = 4; }
+    else if (dir == 8) { lx = 8; ly = 0; }
+    else if (dir == 9) { lx = -8; ly = 0; }
+
+    leftEye.targetPupilX = lx;
+    leftEye.targetPupilY = ly;
+    rightEye.targetPupilX = lx;
+    rightEye.targetPupilY = ly;
+
+    leftEye.targetX = 18 + (lx * 0.3f);
+    leftEye.targetY = 14 + (ly * 0.3f);
+    rightEye.targetX = 74 + (lx * 0.3f);
+    rightEye.targetY = 14 + (ly * 0.3f);
+  }
+
+  if (!leftEye.blinking) {
+    float baseW = 36;
+    float baseH = 36;
+    baseH += breathVal;
+
+    switch (currentMood) {
+      case MOOD_NORMAL:
+        leftEye.targetW = baseW; leftEye.targetH = baseH;
+        rightEye.targetW = baseW; rightEye.targetH = baseH;
+        break;
+      case MOOD_HAPPY:
+      case MOOD_LOVE:
+        leftEye.targetW = 40; leftEye.targetH = 32;
+        rightEye.targetW = 40; rightEye.targetH = 32;
+        break;
+      case MOOD_SURPRISED:
+        leftEye.targetW = 30; leftEye.targetH = 45;
+        rightEye.targetW = 30; rightEye.targetH = 45;
+        leftEye.targetPupilX += random(-1, 2);
+        break;
+      case MOOD_SLEEPY:
+        leftEye.targetW = 38; leftEye.targetH = 30;
+        rightEye.targetW = 38; rightEye.targetH = 30;
+        break;
+      case MOOD_ANGRY:
+        leftEye.targetW = 34; leftEye.targetH = 32;
+        rightEye.targetW = 34; rightEye.targetH = 32;
+        break;
+      case MOOD_SAD:
+        leftEye.targetW = 34; leftEye.targetH = 40;
+        rightEye.targetW = 34; rightEye.targetH = 40;
+        break;
+      case MOOD_SUSPICIOUS:
+        leftEye.targetW = 36; leftEye.targetH = 20;
+        rightEye.targetW = 36; rightEye.targetH = 42;
+        break;
+      case MOOD_EXCITED:
+        leftEye.targetW = 42; leftEye.targetH = 36;
+        rightEye.targetW = 42; rightEye.targetH = 36;
+        break;
+    }
+  }
+
+  leftEye.update();
+  rightEye.update();
+}
+
+void drawEmoPage() {
+  updatePhysicsAndMood();
+
+  if (currentMood == MOOD_LOVE) {
+    display.drawBitmap(56, 0, bmp_heart, 16, 16, SH110X_WHITE);
+  } else if (currentMood == MOOD_SLEEPY) {
+    display.drawBitmap(110, 0, bmp_zzz, 16, 16, SH110X_WHITE);
+  } else if (currentMood == MOOD_ANGRY) {
+    display.drawBitmap(56, 0, bmp_anger, 16, 16, SH110X_WHITE);
+  }
+
+  drawUltraProEye(leftEye, true);
+  drawUltraProEye(rightEye, false);
+}
+
+// ==================================================
+// 12. PAGES
+// ==================================================
+void drawForecastPage() {
+  display.fillRect(0, 0, 128, 16, SH110X_WHITE);
+  display.setFont(NULL);
+  display.setTextColor(SH110X_BLACK);
+  display.setCursor(20, 4);
+  display.print("3-DAY FORECAST");
+  display.setTextColor(SH110X_WHITE);
+  display.drawLine(42, 16, 42, 64, SH110X_WHITE);
+  display.drawLine(85, 16, 85, 64, SH110X_WHITE);
+
+  for (int i = 0; i < 3; i++) {
+    int xStart = i * 43;
+    int centerX = xStart + 21;
+
+    display.setFont(NULL);
+    String d = fcast[i].dayName;
+    if (d == "") d = "Wait";
+    display.setCursor(centerX - (int)(d.length() * 3), 20);
+    display.print(d);
+
+    display.drawBitmap(centerX - 8, 28, getMiniIcon(fcast[i].iconType), 16, 16, SH110X_WHITE);
+
+    display.setFont(&FreeSansBold9pt7b);
+    int16_t x1, y1;
+    uint16_t w, h;
+    display.getTextBounds(String(fcast[i].temp).c_str(), 0, 0, &x1, &y1, &w, &h);
+    display.setCursor(centerX - (int)(w / 2) - 2, 60);
+    display.print(fcast[i].temp);
+    display.fillCircle(centerX + (int)(w / 2) + 1, 52, 2, SH110X_WHITE);
+  }
+}
+
+void drawClock() {
+  struct tm t;
+  if (!getLocalTime(&t)) {
+    display.setFont(NULL);
+    display.setCursor(30, 30);
+    display.print("Syncing...");
+    return;
+  }
+
+  String ampm = (t.tm_hour >= 12) ? "PM" : "AM";
+  int h12 = t.tm_hour % 12;
+  if (h12 == 0) h12 = 12;
+
+  display.setTextColor(SH110X_WHITE);
+  display.setFont(NULL);
+  display.setTextSize(1);
+  display.setCursor(114, 0);
+  display.print(ampm);
+
+  display.setFont(&FreeSansBold18pt7b);
+  char timeStr[6];
+  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", h12, t.tm_min);
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(timeStr, 0, 0, &x1, &y1, &w, &h);
+  display.setCursor((SCREEN_WIDTH - (int)w) / 2, 42);
+  display.print(timeStr);
+
+  display.setFont(&FreeSans9pt7b);
+  char dateStr[20];
+  strftime(dateStr, sizeof(dateStr), "%a, %b %d", &t);
+  display.getTextBounds(dateStr, 0, 0, &x1, &y1, &w, &h);
+  display.setCursor((SCREEN_WIDTH - (int)w) / 2, 62);
+  display.print(dateStr);
+}
+
+void drawWeatherCard() {
+  if (WiFi.status() != WL_CONNECTED) {
+    display.setFont(NULL);
+    display.setCursor(0, 0);
+    display.print("No WiFi");
+    return;
+  }
+  display.drawBitmap(96, 0, getBigIcon(weatherMain), 32, 32, SH110X_WHITE);
+
+  display.setFont(&FreeSansBold9pt7b);
+  String c = city;
+  c.toUpperCase();
+  display.setCursor(0, 14);
+  if (c.length() > 9) c = c.substring(0, 8) + ".";
+  display.print(c);
+
+  display.setFont(&FreeSansBold18pt7b);
+  int tempInt = (int)temperature;
+  display.setCursor(0, 48);
+  display.print(tempInt);
+
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(String(tempInt).c_str(), 0, 48, &x1, &y1, &w, &h);
+  display.fillCircle(x1 + (int)w + 5, 26, 4, SH110X_WHITE);
+
+  display.setFont(NULL);
+  display.drawBitmap(88, 32, bmp_tiny_drop, 8, 8, SH110X_WHITE);
+  display.setCursor(100, 32);
+  display.print(humidity);
+  display.print("%");
+
+  display.setCursor(88, 45);
+  display.print("~");
+  display.print((int)feelsLike);
+
+  display.drawLine(0, 52, 128, 52, SH110X_WHITE);
+  display.setCursor(0, 55);
+  display.print(weatherDesc);
+}
+
+void drawWorldClock() {
+  time_t now;
+  time(&now);
+
+  time_t time1 = now + (time_t)worldOffset1 * 60;
+  time_t time2 = now + (time_t)worldOffset2 * 60;
+
+  struct tm tm1, tm2;
+  gmtime_r(&time1, &tm1);
+  gmtime_r(&time2, &tm2);
+
+  int h1 = tm1.tm_hour, m1 = tm1.tm_min;
+  int h2 = tm2.tm_hour, m2 = tm2.tm_min;
+
+  display.fillRect(0, 0, 128, 16, SH110X_WHITE);
+  display.setFont(NULL);
+  display.setTextColor(SH110X_BLACK);
+  display.setCursor(32, 4);
+  display.print("WORLD CLOCK");
+
+  display.setTextColor(SH110X_WHITE);
+  display.drawLine(64, 18, 64, 54, SH110X_WHITE);
+
+  display.setFont(NULL);
+  display.setCursor(16, 22);
+  String c1 = worldCity1.substring(0, 7);
+  display.print(c1);
+
+  display.setFont(&FreeSansBold9pt7b);
+  char buf1[10];
+  snprintf(buf1, sizeof(buf1), "%02d:%02d", h1, m1);
+  display.setCursor(5, 46);
+  display.print(buf1);
+
+  display.setFont(NULL);
+  display.setCursor(78, 22);
+  String c2 = worldCity2.substring(0, 7);
+  display.print(c2);
+
+  display.setFont(&FreeSansBold9pt7b);
+  char buf2[10];
+  snprintf(buf2, sizeof(buf2), "%02d:%02d", h2, m2);
+  display.setCursor(69, 46);
+  display.print(buf2);
+}
+
+// ==================================================
+// 13. POMODORO DRAW + LOGIC
+// ==================================================
+void pomoResetToMode() {
+  pomoOnBreak = false;
+  pomoRunning = false;
+  pomoRemainSec = modes[pomoModeIndex].workSec;
+  pomoLastTickMs = 0;
+}
+
+void pomoTick() {
+  if (!pomoRunning) return;
+  unsigned long now = millis();
+  if (pomoLastTickMs == 0) pomoLastTickMs = now;
+
+  while (now - pomoLastTickMs >= 1000) {
+    pomoLastTickMs += 1000;
+    if (pomoRemainSec > 0) {
+      pomoRemainSec--;
+    } else {
+      pomoOnBreak = !pomoOnBreak;
+      pomoRemainSec = pomoOnBreak ? modes[pomoModeIndex].breakSec : modes[pomoModeIndex].workSec;
+    }
+  }
+}
+
+void drawPomodoroPage() {
+  pomoTick();
+
+  display.setTextColor(SH110X_WHITE);
+  display.setFont(NULL);
+
+  display.fillRect(0, 0, 128, 16, SH110X_WHITE);
+  display.setTextColor(SH110X_BLACK);
+  display.setCursor(8, 4);
+  display.print("POMODORO ");
+  display.print(modes[pomoModeIndex].name);
+
+  display.setTextColor(SH110X_WHITE);
+
+  display.setCursor(8, 22);
+  display.print(pomoOnBreak ? "BREAK" : "FOCUS");
+  display.setCursor(80, 22);
+  display.print(pomoRunning ? "RUN" : "PAUSE");
+
+  uint32_t sec = pomoRemainSec;
+  uint32_t mm = sec / 60;
+  uint32_t ss = sec % 60;
+
+  char buf[10];
+  snprintf(buf, sizeof(buf), "%02lu:%02lu", (unsigned long)mm, (unsigned long)ss);
+
+  display.setFont(&FreeSansBold18pt7b);
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
+  display.setCursor((SCREEN_WIDTH - (int)w) / 2, 52);
+  display.print(buf);
+
+  uint32_t total = pomoOnBreak ? modes[pomoModeIndex].breakSec : modes[pomoModeIndex].workSec;
+  float p = (total == 0) ? 0.0f : (1.0f - (float)pomoRemainSec / (float)total);
+  int barW = 112;
+  int filled = (int)(barW * p);
+
+  display.drawRect(8, 56, barW, 6, SH110X_WHITE);
+  display.fillRect(9, 57, max(0, min(filled, barW - 2)), 4, SH110X_WHITE);
+}
+
+// ==================================================
+// 14. BOOT + WIFI PORTAL (UPGRADED DROPDOWNS)
+// ==================================================
+void playBootAnimation() {
+  display.setTextColor(SH110X_WHITE);
+  int cx = 64;
+  int cy = 32;
+
+  for (int r = 0; r < 80; r += 4) {
+    display.clearDisplay();
+    display.fillCircle(cx, cy, r, SH110X_WHITE);
+    display.display();
+    delay(10);
+  }
+  for (int r = 0; r < 80; r += 4) {
+    display.clearDisplay();
+    display.fillCircle(cx, cy, 80, SH110X_WHITE);
+    display.fillCircle(cx, cy, r, SH110X_BLACK);
+    display.display();
+    delay(10);
+  }
+
+  display.setFont(&FreeSansBold9pt7b);
+  String bootText = "XNova";
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(bootText, 0, 0, &x1, &y1, &w, &h);
+
+  display.clearDisplay();
+  display.setCursor((SCREEN_WIDTH - (int)w) / 2, 36);
+  display.print(bootText);
+  display.display();
+  delay(1200);
+}
+
+void loadPreferences() {
+  Preferences prefs;
+  prefs.begin("deskbuddy", true);
+
+  openrouterApiKey = prefs.getString("or_key", "");
+  apiKey = prefs.getString("weather_key", "Enter your Weather key here");
+  city = prefs.getString("city", "Dhaka");
+  countryCode = prefs.getString("country", "BD");
+  tzOffsetMinutes = prefs.getInt("tzm", 360);
+
+  worldCity1 = prefs.getString("wc1", "New York");
+  worldCity2 = prefs.getString("wc2", "London");
+  worldOffset1 = prefs.getInt("wo1", -5 * 60);
+  worldOffset2 = prefs.getInt("wo2", 0);
+
+  prefs.end();
+}
+
+void savePreferences() {
+  Preferences prefs;
+  prefs.begin("deskbuddy", false);
+
+  prefs.putString("or_key", openrouterApiKey);
+  prefs.putString("weather_key", apiKey);
+  prefs.putString("city", city);
+  prefs.putString("country", countryCode);
+  prefs.putInt("tzm", tzOffsetMinutes);
+
+  prefs.putString("wc1", worldCity1);
+  prefs.putString("wc2", worldCity2);
+  prefs.putInt("wo1", worldOffset1);
+  prefs.putInt("wo2", worldOffset2);
+
+  prefs.end();
+}
+
+// HTML dropdown presets (Country + WorldClock)
+String buildPortalPresetsHTML() {
+  String html = "";
+  html += "<style>"
+          ".db_card{padding:10px;margin:10px 0;border:1px solid #ddd;border-radius:8px;background:#fafafa}"
+          ".db_row{margin:8px 0}"
+          ".db_label{font-weight:600;margin-bottom:4px;display:block}"
+          "select{width:100%;padding:8px;border-radius:6px;border:1px solid #ccc}"
+          "</style>";
+
+  html += "<div class='db_card'>"
+          "<div class='db_row'><span class='db_label'>Quick Setup (Country Preset)</span>"
+          "<select id='db_country_preset' onchange='dbApplyCountryPreset()'>"
+          "<option value=''>-- Select a country --</option>"
+          "<option value='BD'>Bangladesh</option>"
+          "<option value='IN'>India</option>"
+          "<option value='PK'>Pakistan</option>"
+          "<option value='NP'>Nepal</option>"
+          "<option value='LK'>Sri Lanka</option>"
+          "<option value='MY'>Malaysia</option>"
+          "<option value='SG'>Singapore</option>"
+          "<option value='TH'>Thailand</option>"
+          "<option value='VN'>Vietnam</option>"
+          "<option value='CN'>China</option>"
+          "<option value='JP'>Japan</option>"
+          "<option value='KR'>South Korea</option>"
+          "<option value='AE'>UAE</option>"
+          "<option value='SA'>Saudi Arabia</option>"
+          "<option value='TR'>Turkey</option>"
+          "<option value='GB'>United Kingdom</option>"
+          "<option value='FR'>France</option>"
+          "<option value='DE'>Germany</option>"
+          "<option value='IT'>Italy</option>"
+          "<option value='ES'>Spain</option>"
+          "<option value='NL'>Netherlands</option>"
+          "<option value='SE'>Sweden</option>"
+          "<option value='NO'>Norway</option>"
+          "<option value='RU'>Russia</option>"
+          "<option value='US'>United States</option>"
+          "<option value='CA'>Canada</option>"
+          "<option value='BR'>Brazil</option>"
+          "<option value='AR'>Argentina</option>"
+          "<option value='MX'>Mexico</option>"
+          "<option value='ZA'>South Africa</option>"
+          "<option value='EG'>Egypt</option>"
+          "<option value='AU'>Australia</option>"
+          "<option value='NZ'>New Zealand</option>"
+          "</select></div>"
+          "<small>Auto-fills: Country + City + Timezone Offset (minutes). You can still edit manual fields below.</small>"
+          "</div>";
+
+  html += "<div class='db_card'>"
+          "<div class='db_row'><span class='db_label'>World Clock Preset 1</span>"
+          "<select id='db_wc_preset1' onchange='dbApplyWorldPreset(1)'>"
+          "<option value=''>-- Select a city --</option>"
+          "<option value='Dhaka|360'>Dhaka (UTC+6)</option>"
+          "<option value='Kolkata|330'>Kolkata (UTC+5:30)</option>"
+          "<option value='Karachi|300'>Karachi (UTC+5)</option>"
+          "<option value='Dubai|240'>Dubai (UTC+4)</option>"
+          "<option value='Riyadh|180'>Riyadh (UTC+3)</option>"
+          "<option value='Istanbul|180'>Istanbul (UTC+3)</option>"
+          "<option value='Moscow|180'>Moscow (UTC+3)</option>"
+          "<option value='London|0'>London (UTC+0)</option>"
+          "<option value='Paris|60'>Paris (UTC+1)</option>"
+          "<option value='Berlin|60'>Berlin (UTC+1)</option>"
+          "<option value='New York|-300'>New York (UTC-5)</option>"
+          "<option value='Chicago|-360'>Chicago (UTC-6)</option>"
+          "<option value='Los Angeles|-480'>Los Angeles (UTC-8)</option>"
+          "<option value='Toronto|-300'>Toronto (UTC-5)</option>"
+          "<option value='Sao Paulo|-180'>Sao Paulo (UTC-3)</option>"
+          "<option value='Tokyo|540'>Tokyo (UTC+9)</option>"
+          "<option value='Seoul|540'>Seoul (UTC+9)</option>"
+          "<option value='Singapore|480'>Singapore (UTC+8)</option>"
+          "<option value='Sydney|600'>Sydney (UTC+10)</option>"
+          "<option value='Auckland|720'>Auckland (UTC+12)</option>"
+          "</select></div>"
+          "<div class='db_row'><span class='db_label'>World Clock Preset 2</span>"
+          "<select id='db_wc_preset2' onchange='dbApplyWorldPreset(2)'>"
+          "<option value=''>-- Select a city --</option>"
+          "<option value='Dhaka|360'>Dhaka (UTC+6)</option>"
+          "<option value='Kolkata|330'>Kolkata (UTC+5:30)</option>"
+          "<option value='Karachi|300'>Karachi (UTC+5)</option>"
+          "<option value='Dubai|240'>Dubai (UTC+4)</option>"
+          "<option value='Riyadh|180'>Riyadh (UTC+3)</option>"
+          "<option value='Istanbul|180'>Istanbul (UTC+3)</option>"
+          "<option value='Moscow|180'>Moscow (UTC+3)</option>"
+          "<option value='London|0'>London (UTC+0)</option>"
+          "<option value='Paris|60'>Paris (UTC+1)</option>"
+          "<option value='Berlin|60'>Berlin (UTC+1)</option>"
+          "<option value='New York|-300'>New York (UTC-5)</option>"
+          "<option value='Chicago|-360'>Chicago (UTC-6)</option>"
+          "<option value='Los Angeles|-480'>Los Angeles (UTC-8)</option>"
+          "<option value='Toronto|-300'>Toronto (UTC-5)</option>"
+          "<option value='Sao Paulo|-180'>Sao Paulo (UTC-3)</option>"
+          "<option value='Tokyo|540'>Tokyo (UTC+9)</option>"
+          "<option value='Seoul|540'>Seoul (UTC+9)</option>"
+          "<option value='Singapore|480'>Singapore (UTC+8)</option>"
+          "<option value='Sydney|600'>Sydney (UTC+10)</option>"
+          "<option value='Auckland|720'>Auckland (UTC+12)</option>"
+          "</select></div>"
+          "<small>These fill manual World Clock fields (City + Offset minutes). You can still edit them below.</small>"
+          "</div>";
+
+  html += "<script>"
+          "function dbSet(id,val){var e=document.getElementById(id); if(e){e.value=val;}}"
+          "function dbApplyCountryPreset(){"
+          " var cc=document.getElementById('db_country_preset').value;"
+          " if(!cc) return;"
+          " var map={"
+          "  'BD':{city:'Dhaka', tzm:360},"
+          "  'IN':{city:'Kolkata', tzm:330},"
+          "  'PK':{city:'Karachi', tzm:300},"
+          "  'NP':{city:'Kathmandu', tzm:345},"
+          "  'LK':{city:'Colombo', tzm:330},"
+          "  'MY':{city:'Kuala Lumpur', tzm:480},"
+          "  'SG':{city:'Singapore', tzm:480},"
+          "  'TH':{city:'Bangkok', tzm:420},"
+          "  'VN':{city:'Hanoi', tzm:420},"
+          "  'CN':{city:'Beijing', tzm:480},"
+          "  'JP':{city:'Tokyo', tzm:540},"
+          "  'KR':{city:'Seoul', tzm:540},"
+          "  'AE':{city:'Dubai', tzm:240},"
+          "  'SA':{city:'Riyadh', tzm:180},"
+          "  'TR':{city:'Istanbul', tzm:180},"
+          "  'GB':{city:'London', tzm:0},"
+          "  'FR':{city:'Paris', tzm:60},"
+          "  'DE':{city:'Berlin', tzm:60},"
+          "  'IT':{city:'Rome', tzm:60},"
+          "  'ES':{city:'Madrid', tzm:60},"
+          "  'NL':{city:'Amsterdam', tzm:60},"
+          "  'SE':{city:'Stockholm', tzm:60},"
+          "  'NO':{city:'Oslo', tzm:60},"
+          "  'RU':{city:'Moscow', tzm:180},"
+          "  'US':{city:'New York', tzm:-300},"
+          "  'CA':{city:'Toronto', tzm:-300},"
+          "  'BR':{city:'Sao Paulo', tzm:-180},"
+          "  'AR':{city:'Buenos Aires', tzm:-180},"
+          "  'MX':{city:'Mexico City', tzm:-360},"
+          "  'ZA':{city:'Johannesburg', tzm:120},"
+          "  'EG':{city:'Cairo', tzm:120},"
+          "  'AU':{city:'Sydney', tzm:600},"
+          "  'NZ':{city:'Auckland', tzm:720}"
+          " };"
+          " var p=map[cc]; if(!p) return;"
+          " dbSet('country', cc);"
+          " dbSet('city', p.city);"
+          " dbSet('tzm', String(p.tzm));"
+          "}"
+          "function dbApplyWorldPreset(n){"
+          " var sel=document.getElementById(n==1?'db_wc_preset1':'db_wc_preset2');"
+          " if(!sel || !sel.value) return;"
+          " var parts=sel.value.split('|');"
+          " var name=parts[0]; var off=parts[1];"
+          " if(n==1){ dbSet('wc1', name); dbSet('wo1', off); }"
+          " else { dbSet('wc2', name); dbSet('wo2', off); }"
+          "}"
+          "</script>";
+
+  return html;
+}
+
+/*
+  One unified portal runner
+  - firstBootOrAutoConnect = true  => autoConnect("DeskBuddy2.0-Setup")
+  - firstBootOrAutoConnect = false => startConfigPortal("DeskBuddy2.0-Setup")
+*/
+bool runWiFiManagerPortal(bool firstBootOrAutoConnect) {
+  loadPreferences();
+
+  WiFiManager wm;
+  wm.setConfigPortalTimeout(180);
+
+  // dropdown UI block
+  String html = buildPortalPresetsHTML();
+  WiFiManagerParameter p_html(html.c_str());
+  wm.addParameter(&p_html);
+
+  // editable fields
+  WiFiManagerParameter p_or_key("or_key", "OpenRouter API Key", openrouterApiKey.c_str(), 90);
+  WiFiManagerParameter p_weather_key("weather_key", "OpenWeatherMap API Key", apiKey.c_str(), 40);
+  WiFiManagerParameter p_city("city", "Weather City (manual)", city.c_str(), 40);
+  WiFiManagerParameter p_country("country", "Country Code (manual, e.g., BD)", countryCode.c_str(), 10);
+
+  char tzb[10];
+  snprintf(tzb, sizeof(tzb), "%d", tzOffsetMinutes);
+  WiFiManagerParameter p_tzm("tzm", "Timezone Offset Minutes (manual, Dhaka=360)", tzb, 10);
+
+  char buf1[10], buf2[10];
+  snprintf(buf1, sizeof(buf1), "%d", worldOffset1);
+  snprintf(buf2, sizeof(buf2), "%d", worldOffset2);
+
+  WiFiManagerParameter p_wc1("wc1", "World Clock City 1 (manual)", worldCity1.c_str(), 20);
+  WiFiManagerParameter p_wo1("wo1", "Offset 1 minutes (manual)", buf1, 10);
+  WiFiManagerParameter p_wc2("wc2", "World Clock City 2 (manual)", worldCity2.c_str(), 20);
+  WiFiManagerParameter p_wo2("wo2", "Offset 2 minutes (manual)", buf2, 10);
+
+  wm.addParameter(&p_or_key);
+  wm.addParameter(&p_weather_key);
+  wm.addParameter(&p_city);
+  wm.addParameter(&p_country);
+  wm.addParameter(&p_tzm);
+  wm.addParameter(&p_wc1);
+  wm.addParameter(&p_wo1);
+  wm.addParameter(&p_wc2);
+  wm.addParameter(&p_wo2);
+
+  display.clearDisplay();
+  display.setTextColor(SH110X_WHITE);
+  drawCenteredText(firstBootOrAutoConnect ? "WiFi setup..." : "Config Mode...", 26);
+  display.display();
+
+  bool ok = false;
+  if (firstBootOrAutoConnect) {
+    ok = wm.autoConnect("DeskBuddy2.0-Setup");
+  } else {
+    WiFi.disconnect(true, true);
+    delay(200);
+    ok = wm.startConfigPortal("DeskBuddy2.0-Setup");
+  }
+
+  // Read values
+  openrouterApiKey = String(p_or_key.getValue());
+  apiKey = String(p_weather_key.getValue());
+  city = String(p_city.getValue());
+  countryCode = String(p_country.getValue());
+  tzOffsetMinutes = atoi(p_tzm.getValue());
+
+  worldCity1 = String(p_wc1.getValue());
+  worldCity2 = String(p_wc2.getValue());
+  worldOffset1 = atoi(p_wo1.getValue());
+  worldOffset2 = atoi(p_wo2.getValue());
+
+  // Trim
+  openrouterApiKey.trim();
+  apiKey.trim();
+  city.trim();
+  countryCode.trim();
+  worldCity1.trim();
+  worldCity2.trim();
+
+  // Defaults & clamps
+  if (city.length() == 0) city = "Dhaka";
+  if (countryCode.length() == 0) countryCode = "BD";
+  if (tzOffsetMinutes < -720) tzOffsetMinutes = -720;
+  if (tzOffsetMinutes > 840) tzOffsetMinutes = 840;
+
+  if (worldCity1.length() == 0) worldCity1 = "New York";
+  if (worldCity2.length() == 0) worldCity2 = "London";
+  if (worldOffset1 < -720) worldOffset1 = -720;
+  if (worldOffset1 > 840) worldOffset1 = 840;
+  if (worldOffset2 < -720) worldOffset2 = -720;
+  if (worldOffset2 > 840) worldOffset2 = 840;
+
+  savePreferences();
+
+  display.clearDisplay();
+  display.setTextColor(SH110X_WHITE);
+  if (ok) drawCenteredText("Saved & Connected", 26);
+  else drawCenteredText("Portal Closed", 26);
+  display.display();
+  delay(700);
+
+  // Apply new timezone immediately (universal)
+  configTime((long)tzOffsetMinutes * 60L, 0, ntpServer);
+
+  // Refresh weather immediately after save
+  getWeatherAndForecast();
+  lastWeatherUpdate = millis();
+
+  return ok;
+}
+
+void connectWiFiWithPortal() {
+  runWiFiManagerPortal(true);
+}
+
+void enterConfigModeFromPage0() {
+  // Clean UI
+  display.clearDisplay();
+  display.setTextColor(SH110X_WHITE);
+  drawCenteredText("Config Mode", 20);
+  drawCenteredText("Connect AP:", 40);
+  drawCenteredText("DeskBuddy2.0-Setup", 55);
+  display.display();
+
+  // Run portal
+  runWiFiManagerPortal(false);
+
+  // Return to page0 eyes after config
+  currentPage = 0;
+  lastPageSwitch = millis();
+  lastSaccade = 0;
+}
+
+// ==================================================
+// 15. SETUP / LOOP
+// ==================================================
+void setup() {
+  Wire.begin(SDA_PIN, SCL_PIN);
+
+#if TOUCH_ACTIVE_HIGH
+  pinMode(TOUCH_PIN, INPUT_PULLDOWN);
+#else
+  pinMode(TOUCH_PIN, INPUT_PULLUP);
+#endif
+
+  // Start SH1106
+  display.begin(OLED_ADDR, true);
+  display.setTextColor(SH110X_WHITE);
+  display.setContrast(255);
+  display.clearDisplay();
+  display.display();
+
+  // Seed randomness (for eye saccades/blinks)
+  randomSeed((uint32_t)esp_random());
+
+  leftEye.init(18, 14, 36, 36);
+  rightEye.init(74, 14, 36, 36);
+
+  playBootAnimation();
+
+  connectWiFiWithPortal();
+
+  // UNIVERSAL timezone (offset minutes)
+  configTime((long)tzOffsetMinutes * 60L, 0, ntpServer);
+
+  getWeatherAndForecast();
+  lastWeatherUpdate = millis();
+  lastPageSwitch = millis();
+
+  pomoResetToMode();
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  handleTouch();
+
+  if (now - lastWeatherUpdate > 600000UL) {
+    getWeatherAndForecast();
+    lastWeatherUpdate = now;
+  }
+
+  if (!aiPopupActive && currentPage < 3 && now - lastPageSwitch > PAGE_INTERVAL) {
+    currentPage++;
+    if (currentPage > 2) currentPage = 0;
+    lastPageSwitch = now;
+    lastSaccade = 0;
+  }
+
+  display.clearDisplay();
+
+  if (aiPopupActive) {
+    if (now - aiPopupStart > AI_POPUP_SHOW_MS) {
+      closeAiPopup();
+    } else {
+      drawAiPopup();
+      display.display();
+      return;
+    }
+  }
+
+  switch (currentPage) {
+    case 0: drawEmoPage(); break;
+    case 1: drawClock(); break;
+    case 2: drawWeatherCard(); break;
+    case 3: drawWorldClock(); break;
+    case 4: drawForecastPage(); break;
+    case 5: drawPomodoroPage(); break;
+  }
+
+  display.display();
+}
