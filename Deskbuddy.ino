@@ -124,7 +124,7 @@ int currentMood = MOOD_NORMAL;
 // Weather config
 String city = "Dhaka";
 String countryCode = "BD";
-String apiKey = "12e8216ffccc55851ceff4da84b28cb5";  // OpenWeatherMap API key
+String apiKey = "";  // OpenWeatherMap API key
 unsigned long lastWeatherUpdate = 0;
 float temperature = 0.0;
 float feelsLike = 0.0;
@@ -471,7 +471,7 @@ void startAiPopupIfAllowed() {
   unsigned long now = millis();
   if (aiPopupActive) return;
   if (now - lastAiCall < AI_COOLDOWN_MS) {
-    aiLastText = "Cooldown… try again in a moment 🙂";
+    aiLastText = "Cooldown… try again in a moment ";
     aiPopupActive = true;
     aiPopupStart = now;
     return;
