@@ -22,9 +22,9 @@
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 
-#define SDA_PIN 41
-#define SCL_PIN 42
-#define TOUCH_PIN 44
+#define SDA_PIN 8
+#define SCL_PIN 9
+#define TOUCH_PIN 3 
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
@@ -1067,7 +1067,7 @@ void playBootAnimation() {
   }
 
   display.setFont(&FreeSansBold9pt7b);
-  String bootText = "ESCLabs";
+  String bootText = "XNova";
   int16_t x1, y1;
   uint16_t w, h;
   display.getTextBounds(bootText, 0, 0, &x1, &y1, &w, &h);
