@@ -3,28 +3,8 @@ A tiny AI-powered desk companion with emotions, weather, world time and focus to
 
 ## Supported Versions
 
-### ESP32-S3 Version 
 
-- Display: SSD1306 OLED
-- Wiring:
-  - SDA → GPIO41
-  - SCL → GPIO42
-  - Touch → GPIO44
-- Board: ESP32-S3
-
-Features:
-- Full DeskBuddy UI
-- Weather + Forecast
-- World Clock
-- Pomodoro
-- AI Popup
-- WiFiManager Config Portal
-- Triple Tap Config Mode
-
-
----
-
-### ESP32-C3 Version (Viewer Edition)
+### ESP32-C3 Version 
 
 - Display: SH1106 OLED
 - Wiring:
@@ -45,6 +25,27 @@ Same Features Included:
 - Double Tap Brightness
 - Long Press Mood
 - Extra Long Press AI Popup
+
+### ESP32-S3 Version 
+
+- Display: SSD1306 OLED
+- Wiring:
+  - SDA → GPIO41
+  - SCL → GPIO42
+  - Touch → GPIO44
+- Board: ESP32-S3
+
+Features:
+- Full DeskBuddy UI
+- Weather + Forecast
+- World Clock
+- Pomodoro
+- AI Popup
+- WiFiManager Config Portal
+- Triple Tap Config Mode
+
+
+---
 
 
 ## 🔌 Wiring
