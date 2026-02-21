@@ -1,20 +1,3 @@
-/*
-  DeskBuddy OLED (ESP32-S3) — FULL WORKING UPGRADED VERSION (TRIPLE TAP CONFIG)
-  ---------------------------------------------------------------------------
-  Change you asked:
-  ✅ Removed: Page-0 (Eyes page) hold 5 seconds => Config Mode
-  ✅ Added:   ONLY when on Page-0 (Eyes page), TRIPLE TAP => Config Mode
-  ✅ Everything else stays the same (double tap brightness, long-press mood, AI popup logic, etc.)
-
-  Your wiring (fixed):
-  - OLED I2C: SDA=GPIO41, SCL=GPIO42
-  - Touch OUT: GPIO44
-
-  Libraries (Arduino Library Manager):
-  - WiFiManager (tzapu)
-  - Adafruit SSD1306, Adafruit GFX
-  - Arduino_JSON
-*/
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
